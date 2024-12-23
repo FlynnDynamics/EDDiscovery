@@ -54,27 +54,29 @@ namespace EDDiscovery.UserControls
             List<string> engineers = Recipes.EngineeringRecipes.SelectMany(r => r.Engineers).Distinct().ToList();
             engineers.Sort();
             efs = new RecipeFilterSelector(engineers);
-            efs.UC.AddGroupItem(string.Join(";",ItemData.ShipEngineers()), "Ship Engineers");
+            efs.UC.AddGroupItem(string.Join(";", ItemData.ShipEngineers()), "Ship Engineers");
             efs.UC.AddGroupItem(string.Join(";", ItemData.OnFootEngineers()), "On Foot Engineers");
             efs.UC.AddGroupItem("Guardian;Guardian Weapons;Human;Special Effect;Suit;Weapon;", "Other Enginnering");
-            efs.SaveSettings += (newvalue, e) => {
-                string prevsetting = GetSetting(dbEngFilterSave,"All");
+            efs.SaveSettings += (newvalue, e) =>
+            {
+                string prevsetting = GetSetting(dbEngFilterSave, "All");
                 if (prevsetting != newvalue)
                 {
                     PutSetting(dbEngFilterSave, newvalue);
                     SetupDisplay();
-                    UpdateDisplay();
                 }
             };
 
-            var enumlisttt = new Enum[] { EDTx.UserControlEngineers_buttonFilterEngineer_ToolTip, 
+            var enumlisttt = new Enum[] { EDTx.UserControlEngineers_buttonFilterEngineer_ToolTip,
                         EDTx.UserControlEngineers_extCheckBoxWordWrap_ToolTip, EDTx.UserControlEngineers_extCheckBoxMoreInfo_ToolTip,
-                        EDTx.UserControlEngineers_buttonClear_ToolTip, EDTx.UserControlEngineers_extButtonPushResources_ToolTip, 
+                        EDTx.UserControlEngineers_buttonClear_ToolTip, EDTx.UserControlEngineers_extButtonPushResources_ToolTip,
                         EDTx.UserControlEngineers_chkNotHistoric_ToolTip};
             BaseUtils.Translator.Instance.TranslateTooltip(toolTip, enumlisttt, this);
 
             DiscoveryForm.OnNewEntry += Discoveryform_OnNewEntry;
             DiscoveryForm.OnHistoryChange += RefreshData;
+
+
         }
 
         public override void Closing()
@@ -118,138 +120,249 @@ namespace EDDiscovery.UserControls
 
         public override void ReceiveHistoryEntry(HistoryEntry he)
         {
-            if (isHistoric )
+            if (isHistoric)
             {
                 last_he = he;
                 UpdateDisplay();
             }
         }
 
+
+        private int PanelHeight; // Height of each engineer panel
+        private List<string> engineers; // List of engineers
+        private int totalVisiblePanels; // Number of panels visible on screen
+        private Dictionary<int, EngineerStatusPanel> visiblePanels = new Dictionary<int, EngineerStatusPanel>();
+
+
         public void SetupDisplay()
         {
-            //System.Diagnostics.Debug.WriteLine($"Setup {BaseUtils.AppTicks.TickCountLap("s1", true)}");
-
-            if ( engineerpanels!=null)
-            {
-                foreach (var ep in engineerpanels)
-                    ep.UnInstallEvents();
-
-                panelEngineers.ClearControls();
-                engineerpanels = null;
-            }
-
-            //System.Diagnostics.Debug.WriteLine($"Cleaned {BaseUtils.AppTicks.TickCountLap("s1")}");
-
-            List<string> engineers = Recipes.EngineeringRecipes.SelectMany(r => r.Engineers).Distinct().ToList();
-            engineers.Sort();
-            engineerpanels = new List<EngineerStatusPanel>();
-
-            string engineerssetting = GetSetting(dbEngFilterSave, "All");
-            string colsetting = DGVSaveName();
-
+            // Suspend layout to optimize UI updates
             panelEngineers.SuspendLayout();
 
-            int vpos = 0;
-
-            foreach (var name in engineers)
+            // Clean up previous panels
+            if (visiblePanels != null)
             {
-                if (engineerssetting == "All" || engineerssetting.Contains(name))
+                foreach (var panel in visiblePanels.Values)
                 {
-                    var ep = new EngineerStatusPanel();
-                    ItemData.EngineeringInfo ei = ItemData.GetEngineerInfo(name);
+                    panel.UnInstallEvents();
+                    panelEngineers.Controls.Remove(panel);
+                }
+                visiblePanels.Clear();
+            }
 
-                    ep.Init(name, ei, GetSetting(dbWSave + "_" + name, ""), colsetting);
-                    ep.UpdateWordWrap(extCheckBoxWordWrap.Checked);
-                    ep.SaveSettings += () => { PutSetting(dbWSave + "_" + name, ep.WantedPerRecipe.ToString(",")); };
-                    ep.AskForRedisplay += () => { UpdateDisplay(); };
+            // Apply filter and update the list
+            string filter = GetSetting(dbEngFilterSave, "All");
+            engineers = Recipes.EngineeringRecipes
+                .SelectMany(r => r.Engineers)
+                .Distinct()
+                .Where(e => filter.Equals("All", StringComparison.InvariantCultureIgnoreCase) || filter.Contains(e, StringComparison.InvariantCultureIgnoreCase))
+                .OrderBy(e => e)
+                .ToList();
 
-                    ep.ColumnSetupChanged += (panel) =>
+            // Initialize panel height
+            InitializePanelHeight();
+
+            // Add placeholders for each panel
+            for (int i = 0; i < engineers.Count; i++)
+            {
+                var placeholder = CreatePlaceholderPanel();
+                placeholder.Bounds = new Rectangle(0, i * PanelHeight, panelEngineers.Width - panelEngineers.ScrollBarWidth - 4, PanelHeight);
+                visiblePanels[i] = placeholder;
+                panelEngineers.Controls.Add(placeholder);
+            }
+
+            CalculateVisiblePanelCount();
+            UpdateScrollRange();
+            UpdateVisiblePanels(0);
+
+            // Attach scroll event
+            panelEngineers.ScrollBar.ValueChanged -= ScrollBar_ValueChanged;
+            panelEngineers.ScrollBar.ValueChanged += ScrollBar_ValueChanged;
+
+            // Resume layout after updates
+            panelEngineers.ResumeLayout();
+        }
+
+
+        private void InitializePanelHeight()
+        {
+            if (PanelHeight == 0) // Calculate only if not already set
+            {
+                var tempPanel = new EngineerStatusPanel();
+                PanelHeight = tempPanel.GetVSize(extCheckBoxMoreInfo.Checked); // Dynamic height or fallback
+            }
+        }
+
+
+        private void CalculateVisiblePanelCount()
+        {
+            if (PanelHeight == 0) return; // Ensure PanelHeight is set
+            totalVisiblePanels = Math.Max(1, panelEngineers.Height / PanelHeight); // At least 1 panel visible
+        }
+
+        private void UpdateVisiblePanels(int scrollPosition)
+        {
+            if (engineers == null || engineers.Count == 0)
+                return;
+
+            // Determine visible range with buffer
+            int firstVisibleIndex = Math.Max(0, scrollPosition / PanelHeight - 1); // -1 for buffer
+            int lastVisibleIndex = Math.Min(firstVisibleIndex + totalVisiblePanels + 2, engineers.Count - 1); // +2 for buffer
+
+            // Replace placeholders in the visible range
+            for (int i = firstVisibleIndex; i <= lastVisibleIndex; i++)
+            {
+                if (visiblePanels.ContainsKey(i))
+                {
+                    var panel = visiblePanels[i];
+                    if (!panel.Enabled) // Replace placeholders
                     {
-                        //System.Diagnostics.Debug.WriteLine($"Panel {panel.Name} changed");
-                        panel.SaveDGV(colsetting);      
+                        var realPanel = CreateEngineerPanel(engineers[i]);
+                        realPanel.Bounds = panel.Bounds;
 
-                        foreach (var p in engineerpanels)
-                        {
-                            if (p != panel)
-                            {
-                                p.LoadDGV(colsetting);
-                            }
-                        }
-                    };
+                        visiblePanels[i] = realPanel;
 
-                    panelEngineers.Controls.Add(ep);
+                        panelEngineers.Controls.Remove(panel);
+                        panelEngineers.Controls.Add(realPanel);
 
-                    int panelvspacing = ep.GetVSize(extCheckBoxMoreInfo.Checked);
-
-                    // need to set bounds after adding, for some reason
-                    ep.Bounds = new Rectangle(0, vpos, panelEngineers.Width - panelEngineers.ScrollBarWidth - 4, panelvspacing);
-
-                    engineerpanels.Add(ep);
-
-                    ep.InstallColumnEvents();
-
-                    vpos += panelvspacing + 4;
-                    //       System.Diagnostics.Debug.WriteLine($"Made {name} Complete {BaseUtils.AppTicks.TickCountLap("s1")}");
+                        UpdatePanelStatus(realPanel);
+                    }
                 }
             }
 
-            panelEngineers.ResumeLayout();
-            //System.Diagnostics.Debug.WriteLine($"Setup Complete {BaseUtils.AppTicks.TickCountLap("s1")}");
-
+            panelEngineers.PerformLayout();
         }
 
-        // last_he is the position, may be nul
+
+        private void UpdatePanelStatus(EngineerStatusPanel panel)
+        {
+            var lastengprog = DiscoveryForm.History.GetLastHistoryEntry(x => x.EntryType == JournalTypeEnum.EngineerProgress, last_he);
+            var system = last_he?.System;
+            var mcllist = last_he != null ? DiscoveryForm.History.MaterialCommoditiesMicroResources.Get(last_he.MaterialCommodity) : null;
+
+            List<HistoryEntry> crafts = null;
+            if (last_he != null)
+            {
+                crafts = DiscoveryForm.History.Engineering.Get(last_he.Engineering, EngineerCrafting.TechBrokerID);
+            }
+
+            string status = "";
+            if (lastengprog != null && panel.EngineerInfo != null)
+            {
+                var state = (lastengprog.journalEntry as EliteDangerousCore.JournalEvents.JournalEngineerProgress)?.Progress(panel.Name);
+                if (state == EliteDangerousCore.JournalEvents.JournalEngineerProgress.InviteState.UnknownEngineer)
+                    state = EliteDangerousCore.JournalEvents.JournalEngineerProgress.InviteState.None;
+                status = state.ToString();
+            }
+
+            panel.UpdateStatus(status, system, mcllist, crafts);
+        }
+
+        private void ScrollBar_ValueChanged(object sender, EventArgs e)
+        {
+            int maxScroll = panelEngineers.VerticalScroll.Maximum;
+            int minScroll = panelEngineers.VerticalScroll.Minimum;
+
+            if (panelEngineers.VerticalScroll.Value < minScroll || panelEngineers.VerticalScroll.Value > maxScroll)
+            {
+                panelEngineers.VerticalScroll.Value = Math.Max(minScroll, Math.Min(maxScroll, panelEngineers.VerticalScroll.Value));
+            }
+
+            UpdateVisiblePanels(panelEngineers.ScrollBar.Value);
+        }
+
+        private void UpdateScrollRange()
+        {
+            if (engineers == null || engineers.Count == 0)
+            {
+                panelEngineers.VerticalScroll.Maximum = 0;
+                return;
+            }
+
+            int totalHeight = engineers.Count * PanelHeight;
+
+            panelEngineers.VerticalScroll.Maximum = Math.Max(0, totalHeight - panelEngineers.Height);
+            panelEngineers.VerticalScroll.LargeChange = panelEngineers.Height;
+            panelEngineers.VerticalScroll.SmallChange = Math.Max(10, PanelHeight / 2);
+        }
+
+        private EngineerStatusPanel CreatePlaceholderPanel()
+        {
+            var placeholder = new EngineerStatusPanel
+            {
+                BackColor = Color.Black,
+                Enabled = false,
+                Visible = true
+            };
+
+            placeholder.Size = new Size(panelEngineers.Width - panelEngineers.ScrollBarWidth - 4, PanelHeight);
+
+            return placeholder;
+        }
+
+        private EngineerStatusPanel CreateEngineerPanel(string name)
+        {
+            var panel = new EngineerStatusPanel();
+            var info = ItemData.GetEngineerInfo(name);
+
+            panel.Init(name, info, GetSetting(dbWSave + "_" + name, ""), DGVSaveName());
+            panel.UpdateWordWrap(extCheckBoxWordWrap.Checked);
+
+            panel.SaveSettings += () => PutSetting(dbWSave + "_" + name, panel.WantedPerRecipe.ToString(","));
+            panel.AskForRedisplay += UpdateDisplay;
+
+            panel.ColumnSetupChanged += (changedPanel) =>
+            {
+                changedPanel.SaveDGV(DGVSaveName());
+                foreach (var otherPanel in visiblePanels.Values.Where(p => p != changedPanel))
+                {
+                    otherPanel.LoadDGV(DGVSaveName());
+                }
+            };
+            return panel;
+        }
+
+
+
         public void UpdateDisplay()
         {
-            //System.Diagnostics.Debug.WriteLine($"Update {BaseUtils.AppTicks.TickCountLap("s2", true)}");
+            var lastengprog = DiscoveryForm.History.GetLastHistoryEntry(x => x.EntryType == JournalTypeEnum.EngineerProgress, last_he);
+            var system = last_he?.System;
+            var mcllist = last_he != null ? DiscoveryForm.History.MaterialCommoditiesMicroResources.Get(last_he.MaterialCommodity) : null;
 
-            var lastengprog = DiscoveryForm.History.GetLastHistoryEntry(x => x.EntryType == JournalTypeEnum.EngineerProgress, last_he); // may be null
-            var system = last_he?.System;       // may be null
-
-            for (int i = 0; i < engineerpanels.Count; i++)
+            List<HistoryEntry> crafts = null;
+            if (last_he != null)
             {
-                var ep = engineerpanels[i];
+                crafts = DiscoveryForm.History.Engineering.Get(last_he.Engineering, EngineerCrafting.TechBrokerID);
+            }
 
-                string engineer = ep.Name;
-
+            foreach (var panel in visiblePanels.Values.Where(p => p.Visible))
+            {
                 string status = "";
-
-                if (lastengprog != null && engineerpanels[i].EngineerInfo != null)      // if we have progress, and its an engineer
+                if (lastengprog != null && panel.EngineerInfo != null)
                 {
-                    var state = (lastengprog.journalEntry as EliteDangerousCore.JournalEvents.JournalEngineerProgress).Progress(engineer);
+                    var state = (lastengprog.journalEntry as EliteDangerousCore.JournalEvents.JournalEngineerProgress)?.Progress(panel.Name);
                     if (state == EliteDangerousCore.JournalEvents.JournalEngineerProgress.InviteState.UnknownEngineer)
-                        state = EliteDangerousCore.JournalEvents.JournalEngineerProgress.InviteState.None;      // frontier are not telling, presume none
+                        state = EliteDangerousCore.JournalEvents.JournalEngineerProgress.InviteState.None;
                     status = state.ToString();
                 }
 
-                var mcllist = last_he != null ? DiscoveryForm.History.MaterialCommoditiesMicroResources.Get(last_he.MaterialCommodity) : null;
-
-                List<HistoryEntry> crafts = null;
-
-                if ( last_he != null)
-                {
-                    if (ep.Name.Contains("Guardian") || ep.Name.Equals("Human"))
-                        crafts = DiscoveryForm.History.Engineering.Get(last_he.Engineering, EngineerCrafting.TechBrokerID);
-                    else
-                        crafts = DiscoveryForm.History.Engineering.Get(last_he.Engineering, ep.Name);
-                }
-                
-                ep.UpdateStatus(status, system, mcllist,crafts);
+                panel.UpdateStatus(status, system, mcllist, crafts);
             }
-
-            //System.Diagnostics.Debug.WriteLine($"Update Complete {BaseUtils.AppTicks.TickCountLap("s2")}");
         }
 
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            if ( engineerpanels != null )
+            if (engineerpanels != null)
             {
                 for (int i = 0; i < engineerpanels.Count; i++)
                 {
                     engineerpanels[i].Width = panelEngineers.Width - panelEngineers.ScrollBarWidth - 4;
                 }
             }
+            CalculateVisiblePanelCount();
+            UpdateScrollRange();
         }
 
         #region UI
@@ -263,7 +376,7 @@ namespace EDDiscovery.UserControls
         private void extCheckBoxWordWrap_Click(object sender, EventArgs e)
         {
             PutSetting(dbWordWrap, extCheckBoxWordWrap.Checked);
-            foreach ( var p in engineerpanels.DefaultIfEmpty())
+            foreach (var p in engineerpanels.DefaultIfEmpty())
                 p.UpdateWordWrap(extCheckBoxWordWrap.Checked);
         }
 
@@ -297,7 +410,7 @@ namespace EDDiscovery.UserControls
             Dictionary<MaterialCommodityMicroResourceType, int> resourcelist = new Dictionary<MaterialCommodityMicroResourceType, int>();
             foreach (var p in engineerpanels)
             {
-                foreach( var kvp in p.NeededResources )
+                foreach (var kvp in p.NeededResources)
                 {
                     if (resourcelist.TryGetValue(kvp.Key, out int value))
                     {
