@@ -223,11 +223,9 @@ namespace EDDiscovery.UserControls
                         visiblePanels[i] = realPanel;
 
                         panelEngineers.Controls.Remove(panel);
-                        panelEngineers.Controls.Add(realPanel);
-
-                        
-
-                        }
+                        panelEngineers.Controls.Add(realPanel);  
+                    }
+                    
                 }
             }
             UpdateDisplay();
