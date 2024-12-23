@@ -225,12 +225,12 @@ namespace EDDiscovery.UserControls
                         panelEngineers.Controls.Remove(panel);
                         panelEngineers.Controls.Add(realPanel);
 
-                        UpdateDisplay();
+                        
 
                         }
                 }
             }
-
+            UpdateDisplay();
             panelEngineers.PerformLayout();
         }
 
@@ -315,7 +315,10 @@ namespace EDDiscovery.UserControls
 
             foreach (var panel in visiblePanels.Values.Where(p => p.Visible))
             {
-                string status = "";
+                if (!panel.Enabled)
+                    return;
+
+                    string status = "";
                 if (lastengprog != null && panel.EngineerInfo != null)
                 {
                     var state = (lastengprog.journalEntry as EliteDangerousCore.JournalEvents.JournalEngineerProgress)?.Progress(panel.Name);
