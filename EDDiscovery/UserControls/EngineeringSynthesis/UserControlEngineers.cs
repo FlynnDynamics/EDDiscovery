@@ -225,38 +225,15 @@ namespace EDDiscovery.UserControls
                         panelEngineers.Controls.Remove(panel);
                         panelEngineers.Controls.Add(realPanel);
 
-                        UpdatePanelStatus(realPanel);
-                    }
+                        UpdateDisplay();
+
+                        }
                 }
             }
 
             panelEngineers.PerformLayout();
         }
 
-
-        private void UpdatePanelStatus(EngineerStatusPanel panel)
-        {
-            var lastengprog = DiscoveryForm.History.GetLastHistoryEntry(x => x.EntryType == JournalTypeEnum.EngineerProgress, last_he);
-            var system = last_he?.System;
-            var mcllist = last_he != null ? DiscoveryForm.History.MaterialCommoditiesMicroResources.Get(last_he.MaterialCommodity) : null;
-
-            List<HistoryEntry> crafts = null;
-            if (last_he != null)
-            {
-                crafts = DiscoveryForm.History.Engineering.Get(last_he.Engineering, EngineerCrafting.TechBrokerID);
-            }
-
-            string status = "";
-            if (lastengprog != null && panel.EngineerInfo != null)
-            {
-                var state = (lastengprog.journalEntry as EliteDangerousCore.JournalEvents.JournalEngineerProgress)?.Progress(panel.Name);
-                if (state == EliteDangerousCore.JournalEvents.JournalEngineerProgress.InviteState.UnknownEngineer)
-                    state = EliteDangerousCore.JournalEvents.JournalEngineerProgress.InviteState.None;
-                status = state.ToString();
-            }
-
-            panel.UpdateStatus(status, system, mcllist, crafts);
-        }
 
         private void ScrollBar_ValueChanged(object sender, EventArgs e)
         {
